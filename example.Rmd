@@ -1,0 +1,154 @@
+---
+title: Animated Longitudinal Trajectories
+output: pdf_document
+header-includes:
+- \usepackage{animate}
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r packages, include = FALSE}
+### Packages
+library(tidyverse)
+```
+
+The idea here is to create all plots (each _frame_ in the animation) in advance, which is then stitched together using the `animation` package in \LaTeX{}.
+
+First, we define longitudinal trajectories for a stable and a declining patient, separately:
+
+```{r}
+stable <- function(time) 60 - 0.01 * time + rnorm(n = length(time), sd = sqrt(5))
+declining <- function(time) 60 - 3 * time + rnorm(n = length(time), sd = sqrt(5))
+```
+
+We then simulate two subjects:
+
+```{r}
+set.seed(375683275)
+
+patient_stable <- data.frame(
+  id = 1,
+  type = "Stable",
+  adcens = 12,
+  obtime = c(0, rep(3, 4))
+) %>%
+  mutate(t = cumsum(obtime)) %>%
+  mutate(y = stable(t)) %>%
+  filter(t <= adcens)
+
+patient_declining <- data.frame(
+  id = 2,
+  type = "Declining",
+  adcens = runif(1, 10, 12),
+  obtime = c(0, rgamma(n = 100, shape = 2, scale = 0.25))
+) %>%
+  mutate(t = cumsum(obtime)) %>%
+  mutate(y = declining(t)) %>%
+  filter(t <= adcens)
+```
+
+We create a single dataset:
+
+```{r}
+hcd <- bind_rows(patient_stable, patient_declining)
+```
+
+We also create a dataset to annotate outcomes:
+
+```{r}
+outcome <- hcd %>%
+  group_by(id) %>%
+  filter(t == max(t))
+```
+
+We now start creating plots for each time point, which are:
+
+```{r kf-plots}
+time_points <- sort(unique(hcd$t))
+time_points
+```
+
+Here we loop over possible time points:
+
+```{r}
+for (i in seq_along(time_points)) {
+  nm1 <- nrow(filter(hcd, t <= time_points[i] & id == 1))
+  nm2 <- nrow(filter(hcd, t <= time_points[i] & id == 2))
+  plot <- ggplot(
+    data = filter(hcd, t <= time_points[i]),
+    aes(x = t, y = y, group = id, colour = type)
+  ) +
+    # geom_vline() highlights the current time
+    # green for illustration purposes only
+    geom_vline(xintercept = time_points[i], color = "green") +
+    # geom_line() and geom_point() for each observation
+    geom_line() +
+    geom_point() +
+    # annotation for the cumulative number of measurements
+    annotate("text", x = 0, y = 15, label = paste("#:", nm2), color = "red") +
+    annotate("text", x = 0, y = 75, label = paste("#:", nm1), color = "black") +
+    # using color to match number of observations
+    # (might need some fiddling around)
+    scale_color_manual(values = c("red", "black")) +
+    # scales and plotting area needs to be fixed, consistent over frames
+    scale_y_continuous(breaks = seq(15, 75, by = 15)) +
+    scale_x_continuous(breaks = 0:12) +
+    coord_cartesian(xlim = c(0, 12), ylim = c(15, 75)) +
+    # no need for a legend here
+    theme(legend.position = "none") +
+    labs(x = "Time", y = "Biomarker")
+  # we add mortality/censoring outcomes when/if they happen
+  # this is what the 'outcome' data.frame is used for
+  if (time_points[i] >= outcome$t[1]) {
+    plot <- plot +
+      annotate("point", x = outcome$t[1], y = outcome$y[1], shape = 5, color = "green")
+  }
+  if (time_points[i] >= outcome$t[2]) {
+    plot <- plot +
+      annotate("point", x = outcome$t[2], y = outcome$y[2], shape = 10, color = "green")
+  }
+  # then, saving each 'frame'
+  ggplot2::ggsave(
+    plot = plot,
+    filename = paste0("Plots/frame-", i, ".pdf"),
+    width = 5, height = 5, dpi = 300
+  )
+}
+```
+
+The plot at "time zero" to set up the stage is:
+
+```{r, width = 5, height = 5, dpi = 300}
+ggplot(filter(hcd, t == 0), aes(x = t, y = y, group = id, colour = type)) +
+  geom_point() +
+  # note:
+  # same scale, plotting area, labels, etc.
+  scale_color_manual(values = c("red", "black")) +
+  scale_y_continuous(breaks = seq(15, 75, by = 15)) +
+  scale_x_continuous(breaks = 0:12) +
+  coord_cartesian(xlim = c(0, 12), ylim = c(15, 75)) +
+  labs(x = "Time", y = "Biomarker") +
+  theme(legend.position = "none")
+```
+
+Then, the following \LaTeX{} code combines the frame that we created before:
+
+```latex
+\begin{center}
+\animategraphics[autoplay, width = \textwidth]{4}{Plots/frame-}{1}{29}
+\end{center}
+```
+
+`29` here is the total number of time points:
+
+```{r}
+length(time_points)
+```
+
+The result is:
+
+\begin{center}
+\animategraphics[autoplay, width = \textwidth]{4}{Plots/frame-}{1}{29}
+\end{center}
+
+Note that this requires `\usepackage{animate}` in the header of the document.
